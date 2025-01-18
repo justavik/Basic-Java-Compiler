@@ -1,3 +1,5 @@
+// src/com/compiler/JavaLexer.java
+
 package com.compiler;
 
 import java.util.*;
@@ -7,7 +9,7 @@ public class JavaLexer {
     private int position = 0;
     private int line = 1;
     private int column = 0;
-    private Token currentToken = null;  // Add this field
+    private Token pushedBackToken = null;  // Add this field
     
     private static final Map<String, TokenType> KEYWORDS;
     static {
@@ -20,6 +22,7 @@ public class JavaLexer {
         KEYWORDS.put("String", TokenType.STRING);
         KEYWORDS.put("new", TokenType.NEW);
         KEYWORDS.put("import", TokenType.IMPORT);
+        KEYWORDS.put("boolean", TokenType.BOOLEAN);
     }
 
     public JavaLexer(String input) {
@@ -103,20 +106,25 @@ public class JavaLexer {
     }
     
     public Token nextToken() {
-        // If we have a pushed-back token, return it
-        if (currentToken != null) {
-            Token token = currentToken;
-            currentToken = null;  // Clear it after use
+        // First check for pushed back token
+        if (pushedBackToken != null) {
+            Token token = pushedBackToken;
+            pushedBackToken = null;  // Clear it after use
             return token;
         }
+
         skipWhitespace();
         
         if (position >= input.length()) {
             return new Token(TokenType.EOF, "", line, column, position);
         }
-    
+        
+        // Save starting position before any token processing
+        int startPos = position;
+        int startLine = line;
+        int startColumn = column;
+        
         char c = peek();
-        int startPos = position;  // Save starting position
         
         // Handle identifiers and keywords
         if (Character.isJavaIdentifierStart(c)) {
@@ -134,36 +142,70 @@ public class JavaLexer {
         }
         
         // Handle operators and punctuation
+        advance(); // Consume the character
+        
         switch (c) {
-            case '+': advance(); return new Token(TokenType.PLUS, "+", line, column, startPos);
-            case '-': advance(); return new Token(TokenType.MINUS, "-", line, column, startPos);
-            case '*': advance(); return new Token(TokenType.STAR, "*", line, column, startPos);
-            case '/': advance(); return new Token(TokenType.SLASH, "/", line, column, startPos);
+            case '+': return new Token(TokenType.PLUS, "+", startLine, startColumn, startPos);
+            case '-': return new Token(TokenType.MINUS, "-", startLine, startColumn, startPos);
+            case '*': return new Token(TokenType.STAR, "*", startLine, startColumn, startPos);
+            case '/': return new Token(TokenType.SLASH, "/", startLine, startColumn, startPos);
             case '=': 
-                advance();
                 if (peek() == '=') {
                     advance();
-                    return new Token(TokenType.EQUALS_EQUALS, "==", line, column, startPos);
+                    return new Token(TokenType.EQUALS_EQUALS, "==", startLine, startColumn, startPos);
                 }
-                return new Token(TokenType.EQUALS, "=", line, column, startPos);
-            case '(': advance(); return new Token(TokenType.LPAREN, "(", line, column, startPos);
-            case ')': advance(); return new Token(TokenType.RPAREN, ")", line, column, startPos);
-            case '{': advance(); return new Token(TokenType.LBRACE, "{", line, column, startPos);
-            case '}': advance(); return new Token(TokenType.RBRACE, "}", line, column, startPos);
-            case '[': advance(); return new Token(TokenType.LBRACKET, "[", line, column, startPos);
-            case ']': advance(); return new Token(TokenType.RBRACKET, "]", line, column, startPos);
-            case ';': advance(); return new Token(TokenType.SEMICOLON, ";", line, column, startPos);
-            case '.': advance(); return new Token(TokenType.DOT, ".", line, column, startPos);
-            case ',': advance(); return new Token(TokenType.COMMA, ",", line, column, startPos);
+                return new Token(TokenType.EQUALS, "=", startLine, startColumn, startPos);
+            case '(': return new Token(TokenType.LPAREN, "(", startLine, startColumn, startPos);
+            case ')': return new Token(TokenType.RPAREN, ")", startLine, startColumn, startPos);
+            case '{': return new Token(TokenType.LBRACE, "{", startLine, startColumn, startPos);
+            case '}': return new Token(TokenType.RBRACE, "}", startLine, startColumn, startPos);
+            case '[': return new Token(TokenType.LBRACKET, "[", startLine, startColumn, startPos);
+            case ']': return new Token(TokenType.RBRACKET, "]", startLine, startColumn, startPos);
+            case ';': return new Token(TokenType.SEMICOLON, ";", startLine, startColumn, startPos);
+            case '.': return new Token(TokenType.DOT, ".", startLine, startColumn, startPos);
+            case ',': return new Token(TokenType.COMMA, ",", startLine, startColumn, startPos);
+            default:
+                throw new LexerException("Unexpected character: " + c, line, column);
         }
-        
-        throw new LexerException("Unexpected character: " + c, line, column);
     }
     
     public void pushBack(Token token) {
-        // Save the current token
+        // Only allow one token pushback
+        if (pushedBackToken != null) {
+            throw new IllegalStateException("Cannot push back multiple tokens");
+        }
         this.position = token.position;
-        this.currentToken = token;
+        this.pushedBackToken = token;
+    }
+
+    public int getCurrentPosition() {
+        return position;
+    }
+
+    public void setPosition(int newPosition) {
+        // Validate the position
+        if (newPosition < 0 || newPosition > input.length()) {
+            throw new IllegalArgumentException("Invalid position: " + newPosition);
+        }
+        
+        // If we're moving backwards, we need to recalculate line and column
+        if (newPosition < position) {
+            // Reset to beginning of file
+            line = 1;
+            column = 0;
+            // Count lines and columns up to the new position
+            for (int i = 0; i < newPosition; i++) {
+                if (input.charAt(i) == '\n') {
+                    line++;
+                    column = 0;
+                } else {
+                    column++;
+                }
+            }
+        }
+        
+        position = newPosition;
+        pushedBackToken = null; // Clear any pushed back token when setting position
     }
 }
 
@@ -171,7 +213,7 @@ public class JavaLexer {
 enum TokenType {
     // Existing tokens...
     CLASS, PUBLIC, STATIC, VOID, INT, STRING, NEW, IMPORT,
-    PRIVATE, PROTECTED, FINAL, ABSTRACT, CONSTRUCTOR,
+    PRIVATE, PROTECTED, FINAL, ABSTRACT, CONSTRUCTOR, BOOLEAN,
     
     // Add new tokens
     SYSTEM, IN, OUT, PRINTLN,

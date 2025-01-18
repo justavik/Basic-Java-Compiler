@@ -1,3 +1,5 @@
+// src/com/compiler/JavaCompiler.java
+
 package com.compiler;
 
 import java.io.*;
@@ -91,47 +93,223 @@ class SemanticAnalyzer {
     private final DiagnosticCollector diagnostics;
     private final Map<String, ClassSymbol> classes;
     private final Deque<Map<String, Symbol>> scopes;
-    
+    private final Map<String, Symbol> globalScope;
+    private final Map<Expression, ClassSymbol> expressionTypes;  // Cache for expression analysis
+
     public SemanticAnalyzer(DiagnosticCollector diagnostics) {
         this.diagnostics = diagnostics;
         this.classes = new HashMap<>();
         this.scopes = new ArrayDeque<>();
+        this.globalScope = new HashMap<>();
+        this.expressionTypes = new HashMap<>();
         initializeBuiltinTypes();
     }
-    
+
+    private ClassSymbol analyzeExpression(Expression expr) {
+        System.out.println("\nDEBUG: [analyzeExpression] START type = " + expr.getClass().getSimpleName());
+        
+        try {
+            // Check the cache first
+            if (expressionTypes.containsKey(expr)) {
+                ClassSymbol cached = expressionTypes.get(expr);
+                System.out.println("DEBUG: [analyzeExpression] Using cached type: " + 
+                    (cached != null ? cached.name : "null") + 
+                    " for " + expr.getClass().getSimpleName());
+                return cached;
+            }
+            
+            ClassSymbol result = null;
+            
+            // Analyze based on expression type
+            if (expr instanceof BinaryExpression) {
+                result = analyzeBinaryExpression((BinaryExpression) expr);
+            } else if (expr instanceof MethodInvocation) {
+                result = analyzeMethodInvocation((MethodInvocation) expr);
+            } else if (expr instanceof VariableReference) {
+                result = analyzeVariableReference((VariableReference) expr);
+            } else if (expr instanceof IntegerLiteral) {
+                result = classes.get("int");
+            } else if (expr instanceof StringLiteral) {
+                result = classes.get("String");
+            } else if (expr instanceof ObjectCreation) {
+                result = analyzeObjectCreation((ObjectCreation) expr);
+            } else if (expr instanceof FieldAccess) {
+                result = analyzeFieldAccess((FieldAccess) expr);
+            }
+            
+            // Cache the result
+            if (result != null) {
+                System.out.println("DEBUG: [analyzeExpression] Caching type: " + result.name + 
+                    " for " + expr.getClass().getSimpleName());
+                expressionTypes.put(expr, result);
+            }
+            
+            System.out.println("DEBUG: [analyzeExpression] END result = " + 
+                (result != null ? result.name : "null") + 
+                " for " + expr.getClass().getSimpleName());
+                
+            return result;
+            
+        } catch (SemanticException se) {
+            System.out.println("DEBUG: [analyzeExpression] SemanticException: " + se.getMessage());
+            throw se;
+        }
+    }
+
     private void initializeBuiltinTypes() {
-        System.out.println("Initializing built-in types"); // Debug
+        System.out.println("DEBUG: Initializing built-in types...");
+    
+        // First initialize all the class symbols
+        ClassSymbol intClass = new ClassSymbol("int", null);
+        ClassSymbol voidClass = new ClassSymbol("void", null);
+        ClassSymbol booleanClass = new ClassSymbol("boolean", null);
+        ClassSymbol stringClass = new ClassSymbol("java.lang.String", null);
         
-        // Add basic types
-        classes.put("int", new ClassSymbol("int", null));
-        classes.put("void", new ClassSymbol("void", null));
-        classes.put("String", new ClassSymbol("java.lang.String", null));
+        System.out.println("DEBUG: Created primitive types");
         
-        // Add PrintStream with println method
-        ClassSymbol printStream = new ClassSymbol("java.io.PrintStream", null);
-        // Add method symbols if needed
-        classes.put("PrintStream", printStream);
+        // Add primitive types to classes map
+        classes.put("int", intClass);
+        classes.put("void", voidClass);
+        classes.put("boolean", booleanClass);
+        classes.put("String", stringClass);
         
-        // Add InputStream type
-        ClassSymbol inputStream = new ClassSymbol("java.io.InputStream", null);
-        classes.put("InputStream", inputStream);
+        System.out.println("DEBUG: Added primitive types to classes map");
+    
+        // Initialize PrintStream with println method
+        ClassSymbol printStreamClass = new ClassSymbol("java.io.PrintStream", null);
+        printStreamClass.addMethod(new MethodSymbol(
+            "println",
+            voidClass,
+            Arrays.asList(new ParameterSymbol("value", stringClass))
+        ));
+        // Add overload for int
+        printStreamClass.addMethod(new MethodSymbol(
+            "println",
+            voidClass,
+            Arrays.asList(new ParameterSymbol("value", intClass))
+        ));
+        classes.put("PrintStream", printStreamClass);
+        System.out.println("DEBUG: Added PrintStream with println method");
+    
+        // Initialize InputStream
+        ClassSymbol inputStreamClass = new ClassSymbol("java.io.InputStream", null);
+        classes.put("InputStream", inputStreamClass);
+        System.out.println("DEBUG: Added InputStream class");
+    
+        // Initialize System class with static fields
+        ClassSymbol systemClass = new ClassSymbol("java.lang.System", null);
+        FieldSymbol outField = new FieldSymbol("out", printStreamClass, true);
+        FieldSymbol inField = new FieldSymbol("in", inputStreamClass, true);
+        systemClass.addField(outField);
+        systemClass.addField(inField);
         
-        // Add Scanner class
-        ClassSymbol scanner = new ClassSymbol("java.util.Scanner", null);
-        classes.put("Scanner", scanner);
+        System.out.println("DEBUG: Created System class with fields:");
+        System.out.println("DEBUG:  - out: " + (systemClass.getField("out") != null));
+        System.out.println("DEBUG:  - in: " + (systemClass.getField("in") != null));
+    
+        // Important: Put System in classes map FIRST
+        classes.put("System", systemClass);
         
-        // Add System class with static fields
-        ClassSymbol system = new ClassSymbol("java.lang.System", null);
-        system.addField(new FieldSymbol("out", printStream));
-        system.addField(new FieldSymbol("in", inputStream));
-        classes.put("System", system);
+        // Then add System to the global scope
+        globalScope.put("System", systemClass);
         
-        // Add to global scope
+        System.out.println("DEBUG: Added System to classes and globalScope");
+        System.out.println("DEBUG: Verify System in maps:");
+        System.out.println("DEBUG:  - classes: " + (classes.get("System") != null));
+        System.out.println("DEBUG:  - globalScope: " + (globalScope.get("System") != null));
+    
+        // Initialize Scanner class
+        ClassSymbol scannerClass = new ClassSymbol("java.util.Scanner", null);
+        scannerClass.addMethod(new MethodSymbol(
+            "nextInt",
+            intClass,
+            Collections.emptyList()
+        ));
+        scannerClass.addMethod(new MethodSymbol(
+            "close",
+            voidClass,
+            Collections.emptyList()
+        ));
+        // Add Scanner constructor
+        scannerClass.addMethod(new MethodSymbol(
+            "<init>",
+            voidClass,
+            Arrays.asList(new ParameterSymbol("source", inputStreamClass))
+        ));
+        classes.put("Scanner", scannerClass);
+        
+        System.out.println("DEBUG: Added Scanner class with methods");
+    
+        // Initialize base scope with global symbols AFTER all types are initialized
         enterScope();
-        getCurrentScope().put("System", system);
+        Map<String, Symbol> currentScope = getCurrentScope();
+        currentScope.putAll(globalScope);  // Copy ALL global symbols
         
-        System.out.println("Built-in types initialized"); // Debug
-        System.out.println("Available classes: " + classes.keySet()); // Debug
+        System.out.println("DEBUG: Initialized base scope with all global symbols");
+        System.out.println("DEBUG: Base scope contains System? " + 
+            currentScope.containsKey("System") + 
+            ", Global scope size: " + globalScope.size() + 
+            ", Current scope size: " + currentScope.size());
+        
+        // Verify System is accessible in current scope
+        System.out.println("DEBUG: System accessibility check:");
+        System.out.println("DEBUG: - In classes map: " + (classes.get("System") != null));
+        System.out.println("DEBUG: - In global scope: " + (globalScope.get("System") != null));
+        System.out.println("DEBUG: - In current scope: " + (currentScope.get("System") != null));
+    }
+
+    private void enterScope() {
+        Map<String, Symbol> newScope = new HashMap<>();
+        if (!scopes.isEmpty()) {
+            newScope.putAll(scopes.peek());
+        } else {
+            newScope.putAll(globalScope);
+        }
+        scopes.push(newScope);
+        System.out.println("DEBUG: Entered new scope. Depth: " + scopes.size() + 
+                         " Contains System? " + newScope.containsKey("System"));
+    }
+
+    private void exitScope() {
+        if (!scopes.isEmpty()) {
+            scopes.pop();
+        }
+    }
+
+    // private Symbol resolveSymbol(String name) {
+    //     System.out.println("DEBUG: resolveSymbol called for: " + name);
+    //     System.out.println("DEBUG: Current scope depth: " + scopes.size());
+        
+    //     // Special handling for System
+    //     if (name.equals("System")) {
+    //         Symbol sys = globalScope.get("System");
+    //         System.out.println("DEBUG: Looking for System in global scope, found: " + (sys != null));
+    //         if (sys != null) return sys;
+    //     }
+        
+    //     // Check current scope first
+    //     if (!scopes.isEmpty()) {
+    //         Symbol symbol = scopes.peek().get(name);
+    //         System.out.println("DEBUG: Found in current scope? " + (symbol != null));
+    //         if (symbol != null) {
+    //             return symbol;
+    //         }
+    //     }
+        
+    //     // Check global scope
+    //     Symbol symbol = globalScope.get(name);
+    //     System.out.println("DEBUG: Found in global scope? " + (symbol != null));
+    //     return symbol;
+    // }
+
+    private Map<String, Symbol> getCurrentScope() {
+        if (scopes.isEmpty()) {
+            enterScope();
+        }
+        Map<String, Symbol> currentScope = scopes.peek();
+        System.out.println("DEBUG: Getting current scope. Contains System? " + 
+                         currentScope.containsKey("System"));
+        return currentScope;
     }
     
     public boolean analyze(CompilationUnit unit) {
@@ -140,12 +318,11 @@ class SemanticAnalyzer {
             for (ImportDeclaration imp : unit.imports) {
                 processImport(imp);
             }
-            
+
             // Analyze main class
             analyzeClass(unit.mainClass);
-            
+
             return !diagnostics.hasErrors();
-            
         } catch (SemanticException e) {
             diagnostics.report(new CompilerDiagnostic(
                 DiagnosticType.ERROR,
@@ -212,7 +389,7 @@ class SemanticAnalyzer {
     private void analyzeMethod(MethodDeclaration method) {
         // Enter method scope
         enterScope();
-        
+
         // Add parameters to scope
         for (ParameterDeclaration param : method.parameters) {
             if (!classes.containsKey(param.type.name)) {
@@ -322,171 +499,315 @@ class SemanticAnalyzer {
         ClassSymbol leftType = analyzeExpression(expr.left);
         ClassSymbol rightType = analyzeExpression(expr.right);
         
-        // For now, only support numeric operations
-        if (leftType != classes.get("int") || rightType != classes.get("int")) {
+        // Handle String concatenation
+        if (expr.operator == TokenType.PLUS) {
+            // If either operand is a String, it's string concatenation
+            if (leftType == classes.get("String") || rightType == classes.get("String")) {
+                return classes.get("String");
+            }
+            
+            // For numeric operations
+            if (leftType == classes.get("int") && rightType == classes.get("int")) {
+                return classes.get("int");
+            }
+        }
+        
+        // Handle other numeric operations
+        if (expr.operator == TokenType.MINUS || 
+            expr.operator == TokenType.STAR || 
+            expr.operator == TokenType.SLASH) {
+            if (leftType == classes.get("int") && rightType == classes.get("int")) {
+                return classes.get("int");
+            }
             throw new SemanticException(
-                "Operator " + expr.operator + " not defined for types " + 
+                "Operator " + expr.operator + " only defined for numeric types, got " + 
                 leftType.name + " and " + rightType.name,
                 expr.line,
                 expr.column
             );
         }
         
-        return classes.get("int");
+        throw new SemanticException(
+            "Operator " + expr.operator + " not defined for types " + 
+            leftType.name + " and " + rightType.name,
+            expr.line,
+            expr.column
+        );
     }
-    
+
     private ClassSymbol analyzeMethodInvocation(MethodInvocation expr) {
-        System.out.println("Analyzing method invocation: " + expr.methodName);
+        System.out.println("\nDEBUG: [analyzeMethodInvocation] START");
         
-        // First analyze the target
-        ClassSymbol targetType = null;
-        if (expr.target != null) {
-            System.out.println("Target exists, analyzing target expression");
-            targetType = analyzeExpression(expr.target);
-            System.out.println("Target type resolved to: " + (targetType != null ? targetType.name : "null"));
-            
-            // Handle PrintStream methods (System.out.println)
-            if (targetType == classes.get("PrintStream")) {
-                System.out.println("Found PrintStream target");
+        try {
+            // First analyze the target
+            ClassSymbol targetType = null;
+            if (expr.target != null) {
+                targetType = analyzeExpression(expr.target);
+                System.out.println("DEBUG: [analyzeMethodInvocation] Analyzed target type: " + 
+                    (targetType != null ? targetType.name : "null"));
+            }
+    
+            if (targetType == null) {
+                throw new SemanticException(
+                    "Cannot invoke method on null",
+                    expr.line,
+                    expr.column
+                );
+            }
+    
+            // Handle System.out.println special case
+            if (targetType.name.equals("java.io.PrintStream")) {
                 if (expr.methodName.equals("println")) {
+                    if (expr.arguments.size() != 1) {
+                        throw new SemanticException(
+                            "println requires exactly one argument",
+                            expr.line,
+                            expr.column
+                        );
+                    }
+    
+                    // Analyze argument once and store result
+                    ClassSymbol argType = analyzeExpression(expr.arguments.get(0));
+                    System.out.println("DEBUG: [analyzeMethodInvocation] println argument type: " + 
+                        (argType != null ? argType.name : "null"));
+    
+                    if (argType == null) {
+                        throw new SemanticException(
+                            "println argument has no type",
+                            expr.line,
+                            expr.column
+                        );
+                    }
+    
+                    // Use the stored argument type
+                    if (argType == classes.get("String") || 
+                        argType == classes.get("int")) {
+                        System.out.println("DEBUG: [analyzeMethodInvocation] println valid argument type");
+                        return classes.get("void");
+                    }
+    
+                    throw new SemanticException(
+                        "println argument must be String or int, got " + argType.name,
+                        expr.line,
+                        expr.column
+                    );
+                }
+            }
+    
+            // Handle Scanner methods
+            if (targetType.name.equals("java.util.Scanner")) {
+                if (expr.methodName.equals("nextInt")) {
+                    if (!expr.arguments.isEmpty()) {
+                        throw new SemanticException(
+                            "nextInt takes no arguments",
+                            expr.line,
+                            expr.column
+                        );
+                    }
+                    return classes.get("int");
+                }
+                if (expr.methodName.equals("close")) {
+                    if (!expr.arguments.isEmpty()) {
+                        throw new SemanticException(
+                            "close takes no arguments",
+                            expr.line,
+                            expr.column
+                        );
+                    }
                     return classes.get("void");
                 }
             }
-            
-            // Handle Scanner methods
-            if (targetType == classes.get("Scanner")) {
-                System.out.println("Found Scanner target");
-                switch (expr.methodName) {
-                    case "nextInt":
-                        return classes.get("int");
-                    case "close":
-                        return classes.get("void");
-                }
-            }
     
-            // If the target is System.out, resolve to PrintStream
-            if (expr.target instanceof FieldAccess) {
-                FieldAccess fieldAccess = (FieldAccess) expr.target;
-                if (fieldAccess.target instanceof VariableReference) {
-                    VariableReference varRef = (VariableReference) fieldAccess.target;
-                    if (varRef.name.equals("System") && fieldAccess.fieldName.equals("out")) {
-                        if (expr.methodName.equals("println")) {
-                            return classes.get("void");
-                        }
-                    }
-                }
-            }
-        }
-    
-        throw new SemanticException(
-            "Cannot resolve method: " + expr.methodName + 
-            (targetType != null ? " on type " + targetType.name : ""),
-            expr.line,
-            expr.column
-        );
-    }
-    
-    private ClassSymbol analyzeFieldAccess(FieldAccess expr) {
-        System.out.println("Analyzing field access: " + expr.fieldName);
-        
-        ClassSymbol targetType = analyzeExpression(expr.target);
-        System.out.println("Field access target type: " + (targetType != null ? targetType.name : "null"));
-        
-        // Handle System.out and System.in
-        if (targetType == classes.get("System")) {
-            System.out.println("Found System type, checking field " + expr.fieldName);
-            if (expr.fieldName.equals("out")) {
-                ClassSymbol printStream = classes.get("PrintStream");
-                System.out.println("Resolved System.out to PrintStream");
-                return printStream;
-            } else if (expr.fieldName.equals("in")) {
-                return classes.get("InputStream");
-            }
-        }
-        
-        throw new SemanticException(
-            "Cannot resolve field: " + expr.fieldName + 
-            " on type " + (targetType != null ? targetType.name : "unknown"),
-            expr.line,
-            expr.column
-        );
-    }
-    
-    private ClassSymbol analyzeExpression(Expression expr) {
-        System.out.println("Analyzing expression: " + expr.getClass().getSimpleName());
-        
-        if (expr instanceof BinaryExpression) {
-            return analyzeBinaryExpression((BinaryExpression) expr);
-        } else if (expr instanceof MethodInvocation) {
-            return analyzeMethodInvocation((MethodInvocation) expr);
-        } else if (expr instanceof VariableReference) {
-            return analyzeVariableReference((VariableReference) expr);
-        } else if (expr instanceof IntegerLiteral) {
-            return classes.get("int");
-        } else if (expr instanceof StringLiteral) {
-            return classes.get("String");
-        } else if (expr instanceof ObjectCreation) {
-            return analyzeObjectCreation((ObjectCreation) expr);
-        } else if (expr instanceof FieldAccess) {
-            return analyzeFieldAccess((FieldAccess) expr);
-        }
-        
-        throw new SemanticException(
-            "Unsupported expression type: " + expr.getClass().getSimpleName(),
-            expr.line,
-            expr.column
-        );
-    }
-    
-    private ClassSymbol analyzeVariableReference(VariableReference expr) {
-        System.out.println("Analyzing variable reference: " + expr.name); // Debug
-        
-        // Special case for System
-        if (expr.name.equals("System")) {
-            ClassSymbol systemClass = classes.get("System");
-            System.out.println("Found System class reference"); // Debug
-            return systemClass;
-        }
-        
-        Symbol symbol = resolveSymbol(expr.name);
-        if (symbol == null) {
+            // If we get here, couldn't resolve the method
             throw new SemanticException(
-                "Cannot resolve variable: " + expr.name,
+                "Cannot find method " + expr.methodName + " on type " + targetType.name,
                 expr.line,
                 expr.column
             );
+            
+        } catch (SemanticException se) {
+            System.out.println("DEBUG: [analyzeMethodInvocation] SemanticException: " + se.getMessage());
+            throw se;
         }
-        
-        System.out.println("Resolved variable " + expr.name + " to type " + symbol.type.name); // Debug
-        return symbol.type;
     }
     
-    private Symbol resolveSymbol(String name) {
-        // Search through all scopes from inner to outer
-        for (Map<String, Symbol> scope : scopes) {
-            Symbol symbol = scope.get(name);
-            if (symbol != null) {
-                return symbol;
+    private ClassSymbol analyzeFieldAccess(FieldAccess expr) {
+        System.out.println("\nDEBUG: [analyzeFieldAccess] START");
+        System.out.println("DEBUG: [analyzeFieldAccess] target type = " + 
+            expr.target.getClass().getSimpleName() + 
+            ", field = " + expr.fieldName);
+    
+        try {
+            // Analyze target FIRST
+            System.out.println("DEBUG: [analyzeFieldAccess] Analyzing target expression");
+            ClassSymbol targetType = analyzeExpression(expr.target);
+            
+            System.out.println("DEBUG: [analyzeFieldAccess] Target analyzed, type: " + 
+                (targetType != null ? targetType.name : "null"));
+    
+            if (targetType == null) {
+                System.out.println("DEBUG: [analyzeFieldAccess] Target type is null!");
+                throw new SemanticException(
+                    "Field access target returned null type",
+                    expr.line,
+                    expr.column
+                );
             }
+    
+            // Get the field
+            System.out.println("DEBUG: [analyzeFieldAccess] Looking up field: " + expr.fieldName);
+            FieldSymbol field = targetType.getField(expr.fieldName);
+            
+            System.out.println("DEBUG: [analyzeFieldAccess] Field lookup result: " + 
+                (field != null ? "found" : "not found"));
+    
+            if (field == null) {
+                throw new SemanticException(
+                    "Cannot find field '" + expr.fieldName + "' in type " + targetType.name,
+                    expr.line,
+                    expr.column
+                );
+            }
+    
+            // Verify static access for System fields
+            if (targetType.name.equals("java.lang.System")) {
+                if (!field.isStatic) {
+                    throw new SemanticException(
+                        "Cannot access non-static field '" + expr.fieldName + 
+                        "' in static context",
+                        expr.line,
+                        expr.column
+                    );
+                }
+                System.out.println("DEBUG: [analyzeFieldAccess] Verified static access");
+            }
+    
+            if (field.type == null) {
+                System.out.println("DEBUG: [analyzeFieldAccess] Field type is null!");
+                throw new SemanticException(
+                    "Field '" + expr.fieldName + "' has no type",
+                    expr.line,
+                    expr.column
+                );
+            }
+    
+            System.out.println("DEBUG: [analyzeFieldAccess] END - returning type: " + field.type.name);
+            return field.type;
+            
+        } catch (SemanticException se) {
+            System.out.println("DEBUG: [analyzeFieldAccess] SemanticException: " + se.getMessage());
+            throw se;
+        } catch (Exception e) {
+            System.out.println("DEBUG: [analyzeFieldAccess] Unexpected exception: " + e);
+            e.printStackTrace();
+            throw e;
         }
-        return null;
+    }
+    
+    private ClassSymbol analyzeVariableReference(VariableReference expr) {
+        System.out.println("\nDEBUG: [analyzeVariableReference] START: " + expr.name);
+        
+        try {
+            // Special handling for System
+            if (expr.name.equals("System")) {
+                debugSystemAvailability("analyzeVariableReference");
+                
+                // Try to get System from classes map
+                ClassSymbol systemClass = classes.get("System");
+                System.out.println("DEBUG: [analyzeVariableReference] System lookup from classes: " + 
+                    (systemClass != null));
+                    
+                if (systemClass != null) {
+                    verifyClassSymbol(systemClass, "System verification");
+                    System.out.println("DEBUG: [analyzeVariableReference] END - returning System class");
+                    return systemClass;  // Return the actual class symbol
+                }
+                
+                throw new SemanticException(
+                    "System class not found",
+                    expr.line,
+                    expr.column
+                );
+            }
+    
+            // For regular variables
+            Map<String, Symbol> currentScope = getCurrentScope();
+            Symbol symbol = currentScope.get(expr.name);
+            
+            System.out.println("DEBUG: [analyzeVariableReference] Variable lookup in current scope: " + 
+                (symbol != null));
+    
+            if (symbol != null) {
+                if (symbol.type == null) {
+                    throw new SemanticException(
+                        "Symbol found but has no type: " + expr.name,
+                        expr.line,
+                        expr.column
+                    );
+                }
+                System.out.println("DEBUG: [analyzeVariableReference] END - returning type: " + 
+                    symbol.type.name);
+                return symbol.type;
+            }
+    
+            throw new SemanticException(
+                "Unknown variable: " + expr.name,
+                expr.line,
+                expr.column
+            );
+            
+        } catch (SemanticException se) {
+            System.out.println("DEBUG: [analyzeVariableReference] SemanticException: " + 
+                se.getMessage());
+            throw se;
+        } catch (Exception e) {
+            System.out.println("DEBUG: [analyzeVariableReference] Unexpected exception: " + e);
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    private void verifyClassSymbol(ClassSymbol cls, String context) {
+        if (cls == null) {
+            System.out.println("DEBUG: " + context + ": ClassSymbol is null!");
+            return;
+        }
+        
+        System.out.println("DEBUG: " + context + " ClassSymbol details:");
+        System.out.println("  - Name: " + cls.name);
+        System.out.println("  - Fields count: " + 
+            (cls.getField("out") != null ? "has out" : "no out") + ", " +
+            (cls.getField("in") != null ? "has in" : "no in"));
+            
+        // Verify the fields themselves
+        FieldSymbol outField = cls.getField("out");
+        if (outField != null) {
+            System.out.println("  - out field type: " + 
+                (outField.type != null ? outField.type.name : "null") +
+                ", static: " + outField.isStatic);
+        }
+        
+        FieldSymbol inField = cls.getField("in");
+        if (inField != null) {
+            System.out.println("  - in field type: " + 
+                (inField.type != null ? inField.type.name : "null") +
+                ", static: " + inField.isStatic);
+        }
     }
     
     private boolean isAssignable(ClassSymbol from, ClassSymbol to) {
         // For now, just check exact type match
         return from == to;
     }
-    
-    private void enterScope() {
-        scopes.push(new HashMap<>());
-    }
-    
-    private void exitScope() {
-        scopes.pop();
-    }
-    
-    private Map<String, Symbol> getCurrentScope() {
-        return scopes.peek();
+
+    private void debugSystemAvailability(String location) {
+        System.out.println("DEBUG: System availability at " + location + ":");
+        System.out.println("  - In classes map: " + (classes.get("System") != null));
+        System.out.println("  - In global scope: " + (globalScope.get("System") != null));
+        if (!scopes.isEmpty()) {
+            System.out.println("  - In current scope: " + (scopes.peek().get("System") != null));
+        }
+        System.out.println("  - Current scope depth: " + scopes.size());
     }
 }
 
@@ -499,28 +820,86 @@ abstract class Symbol {
         this.name = name;
         this.type = type;
     }
-}
-
-class ClassSymbol extends Symbol {
-    private final Map<String, FieldSymbol> fields;
     
-    ClassSymbol(String name, ClassSymbol superclass) {
-        super(name, null);
-        this.fields = new HashMap<>();
-    }
-    
-    void addField(FieldSymbol field) {
-        fields.put(field.name, field);
-    }
-    
-    FieldSymbol getField(String name) {
-        return fields.get(name);
+    public ClassSymbol getType() {
+        return type;
     }
 }
 
 class FieldSymbol extends Symbol {
+    final boolean isStatic;
+    
     FieldSymbol(String name, ClassSymbol type) {
+        this(name, type, false);
+    }
+    
+    FieldSymbol(String name, ClassSymbol type, boolean isStatic) {
         super(name, type);
+        this.isStatic = isStatic;
+    }
+}
+
+// Add MethodSymbol class
+class MethodSymbol extends Symbol {
+    final List<ParameterSymbol> parameters;
+    
+    MethodSymbol(String name, ClassSymbol returnType, List<ParameterSymbol> parameters) {
+        super(name, returnType);
+        this.parameters = parameters;
+    }
+}
+
+// Add ParameterSymbol class
+class ParameterSymbol extends Symbol {
+    ParameterSymbol(String name, ClassSymbol type) {
+        super(name, type);
+    }
+}
+
+// Update ClassSymbol to include methods
+class ClassSymbol extends Symbol {
+    private final Map<String, FieldSymbol> fields;
+    private final Map<String, MethodSymbol> methods;
+    
+    ClassSymbol(String name, ClassSymbol superclass) {
+        super(name, null);  // ClassSymbol is its own type
+        this.fields = new HashMap<>();
+        this.methods = new HashMap<>();
+    }
+    
+    @Override
+    public ClassSymbol getType() {
+        return this;  // ClassSymbol is its own type
+    }
+    
+    void addField(FieldSymbol field) {
+        System.out.println("DEBUG: Adding field " + field.name + " to class " + this.name);
+        fields.put(field.name, field);
+    }
+    
+    void addMethod(MethodSymbol method) {
+        System.out.println("DEBUG: Adding method " + method.name + " to class " + this.name);
+        methods.put(method.name, method);
+    }
+    
+    FieldSymbol getField(String name) {
+        FieldSymbol field = fields.get(name);
+        System.out.println("DEBUG: Getting field " + name + " from class " + this.name + 
+                         " found? " + (field != null));
+        return field;
+    }
+    
+    MethodSymbol getMethod(String name) {
+        return methods.get(name);
+    }
+    
+    Map<String, FieldSymbol> getFields() {
+        return Collections.unmodifiableMap(fields);
+    }
+    
+    @Override
+    public String toString() {
+        return "ClassSymbol{name='" + name + "', fields=" + fields.keySet() + "}";
     }
 }
 

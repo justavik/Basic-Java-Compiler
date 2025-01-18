@@ -1,3 +1,5 @@
+// src/com/compiler/BytecodeGenerator.java
+
 package com.compiler;
 
 import org.objectweb.asm.*;
