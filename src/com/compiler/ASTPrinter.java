@@ -1,28 +1,25 @@
-// src/com/compiler/ASTPrinter.java
-
 package com.compiler;
 
 class ASTPrinter {
     private int indentLevel = 0;
-    private static final String INDENT = "  "; // Two spaces for each level
-    
+    private static final String INDENT = "  "; 
+
     public String print(CompilationUnit unit) {
         StringBuilder sb = new StringBuilder();
         printCompilationUnit(unit, sb);
         return sb.toString();
     }
-    
+
     private void printIndent(StringBuilder sb) {
         for (int i = 0; i < indentLevel; i++) {
             sb.append(INDENT);
         }
     }
-    
+
     private void printCompilationUnit(CompilationUnit unit, StringBuilder sb) {
         sb.append("CompilationUnit\n");
         indentLevel++;
-        
-        // Print imports
+
         if (!unit.imports.isEmpty()) {
             printIndent(sb);
             sb.append("Imports:\n");
@@ -33,19 +30,17 @@ class ASTPrinter {
             }
             indentLevel--;
         }
-        
-        // Print main class
+
         printClass(unit.mainClass, sb);
-        
+
         indentLevel--;
     }
-    
+
     private void printClass(ClassDeclaration clazz, StringBuilder sb) {
         printIndent(sb);
         sb.append("Class: ").append(clazz.name).append("\n");
         indentLevel++;
-        
-        // Print fields
+
         if (!clazz.fields.isEmpty()) {
             printIndent(sb);
             sb.append("Fields:\n");
@@ -55,8 +50,7 @@ class ASTPrinter {
             }
             indentLevel--;
         }
-        
-        // Print methods
+
         if (!clazz.methods.isEmpty()) {
             printIndent(sb);
             sb.append("Methods:\n");
@@ -66,10 +60,10 @@ class ASTPrinter {
             }
             indentLevel--;
         }
-        
+
         indentLevel--;
     }
-    
+
     private void printField(FieldDeclaration field, StringBuilder sb) {
         printIndent(sb);
         sb.append(field.type.name).append(" ").append(field.name);
@@ -79,23 +73,21 @@ class ASTPrinter {
         }
         sb.append("\n");
     }
-    
+
     private void printMethod(MethodDeclaration method, StringBuilder sb) {
         printIndent(sb);
         sb.append(method.returnType.name).append(" ").append(method.name).append("(");
-        
-        // Print parameters
+
         for (int i = 0; i < method.parameters.size(); i++) {
             if (i > 0) sb.append(", ");
             ParameterDeclaration param = method.parameters.get(i);
             sb.append(param.type.name).append(" ").append(param.name);
         }
         sb.append(")\n");
-        
-        // Print method body
+
         printBlock(method.body, sb);
     }
-    
+
     private void printBlock(Block block, StringBuilder sb) {
         indentLevel++;
         for (Statement stmt : block.statements) {
@@ -103,10 +95,10 @@ class ASTPrinter {
         }
         indentLevel--;
     }
-    
+
     private void printStatement(Statement stmt, StringBuilder sb) {
         printIndent(sb);
-        
+
         if (stmt instanceof LocalVariableDeclaration) {
             LocalVariableDeclaration decl = (LocalVariableDeclaration) stmt;
             sb.append(decl.type.name).append(" ").append(decl.name);
@@ -117,10 +109,10 @@ class ASTPrinter {
         } else if (stmt instanceof ExpressionStatement) {
             printExpression(((ExpressionStatement) stmt).expression, sb);
         }
-        
+
         sb.append("\n");
     }
-    
+
     private void printExpression(Expression expr, StringBuilder sb) {
         if (expr instanceof BinaryExpression) {
             BinaryExpression binExpr = (BinaryExpression) expr;

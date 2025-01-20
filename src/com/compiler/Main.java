@@ -1,50 +1,55 @@
-// src/com/compiler/Main.java
-
 package com.compiler;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.List;
 
 public class Main {
     public static void main(String[] args) {
-        if (args.length != 2) {
-            System.err.println("Usage: java Main <source-file> <output-dir>");
-            System.exit(1);
-        }
-
-        String sourceFile = args[0];
-        String outputDir = args[1];
+        String testProgram = 
+            "import java.util.Scanner;\n" +
+            "class Main {\n" +
+            "    public static void main(String[] args) {\n" +
+            "        Scanner ac = new Scanner(System.in);\n" +
+            "        int a = ac.nextInt();\n" +
+            "        int b = ac.nextInt();\n" +
+            "        int c = a + b;\n" +
+            "        System.out.println(\"Output = \" + c);\n" +
+            "        ac.close();\n" +
+            "    }\n" +
+            "}";
 
         try {
-            // Read source file content
-            String source = new String(Files.readAllBytes(Paths.get(sourceFile)));
-            
-            // Parse the source
-            JavaLexer lexer = new JavaLexer(source);
+            // Lexing and Parsing
+            JavaLexer lexer = new JavaLexer(testProgram);
             JavaParser parser = new JavaParser(lexer);
-            
-            // Generate and print AST
             CompilationUnit ast = parser.parseCompilationUnit();
-            
-            System.out.println("\nAbstract Syntax Tree:");
-            System.out.println("=====================");
-            ASTPrinter printer = new ASTPrinter();
-            System.out.println(printer.print(ast));
-            
-            // Continue with compilation...
-            JavaCompiler compiler = new JavaCompiler();
-            boolean success = compiler.compile(sourceFile, outputDir);
 
-            // Print any diagnostics
-            compiler.getDiagnostics().forEach(System.err::println);
+            // Semantic Analysis
+            SemanticAnalyzer analyzer = new SemanticAnalyzer();
+            analyzer.analyze(ast);
 
-            // Exit with appropriate status code
-            System.exit(success ? 0 : 1);
-            
-        } catch (IOException e) {
-            System.err.println("Error reading source file: " + e.getMessage());
-            System.exit(1);
+            // Intermediate Code Generation
+            IntermediateCodeGenerator icg = new IntermediateCodeGenerator();
+            List<String> intermediateCode = icg.generate(ast);
+
+            System.out.println("Intermediate Code:");
+            intermediateCode.forEach(System.out::println);
+
+            // Optimization
+            BasicOptimizer optimizer = new BasicOptimizer();
+            List<String> optimizedCode = optimizer.optimize(intermediateCode);
+
+            System.out.println("\nOptimized Code:");
+            optimizedCode.forEach(System.out::println);
+
+            // Bytecode Generation (existing)
+            BytecodeGenerator generator = new BytecodeGenerator("Main");
+            byte[] bytecode = generator.generate(ast);
+            Files.write(Paths.get("Main.class"), bytecode);
+
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
